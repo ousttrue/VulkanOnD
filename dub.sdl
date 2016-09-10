@@ -1,0 +1,6 @@
+name "vulkanond"
+description "Vulkan D application."
+authors "oustrrue"
+copyright "Copyright © 2016, oustrrue"
+license "MIT"
+dependency "derelict-glfw3" version="~>3.1.0"
