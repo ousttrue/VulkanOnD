@@ -4,12 +4,17 @@ import derelict.glfw3.glfw3;
 import dvulkan;
 import std.experimental.logger;
 import std.exception;
+import std.algorithm;
+import std.range;
 
 
 struct VulkanManager
 {
     VkInstance inst;
     VkPhysicalDevice[] gpus;
+	VkQueueFamilyProperties[] queue_props;
+	int queueFamilyIndex=-1;
+	VkDevice device;
 
 	static this()
 	{
@@ -21,6 +26,7 @@ struct VulkanManager
     ~this()
     {
 		log("~VulkanManager");
+		vkDestroyDevice(device, null);
         vkDestroyInstance(inst, null);
     }
 
@@ -54,6 +60,7 @@ struct VulkanManager
 
             loadInstanceFunctions(inst);
             enforce(vkDestroyInstance, "loadInstanceFunctions");
+			info("01-init_instance");
         }
 
         {
@@ -66,9 +73,48 @@ struct VulkanManager
             gpus=new VkPhysicalDevice[gpu_count];
             res = vkEnumeratePhysicalDevices(inst, &gpu_count, gpus.ptr);
             enforce(!res && gpu_count >= 1, "vkEnumeratePhysicalDevices");
+			info("02-enumerate_devices");
         }
 
-        info("vkCreateInstance success");
+		{
+			// 03
+			uint queue_family_count;
+			vkGetPhysicalDeviceQueueFamilyProperties(gpus[0],
+													 &queue_family_count, null);
+			enforce(queue_family_count >= 1, "vkGetPhysicalDeviceQueueFamilyProperties");
+
+			queue_props=new VkQueueFamilyProperties[queue_family_count];
+			vkGetPhysicalDeviceQueueFamilyProperties(
+													 gpus[0], &queue_family_count, queue_props.ptr);
+			enforce(queue_family_count >= 1);
+
+			queueFamilyIndex = -1;
+			for(int i=0; i<queue_props.length; ++i)
+			{
+				if(queue_props[i].queueFlags & VkQueueFlagBits.VK_QUEUE_GRAPHICS_BIT){
+					queueFamilyIndex=i;
+					break;
+				}
+			}
+			enforce(queueFamilyIndex>= 0);
+
+			VkDeviceQueueCreateInfo queue_info={
+				queueCount: 1,
+				pQueuePriorities: [0.0f],
+			};
+
+			VkDeviceCreateInfo device_info = {
+				queueCreateInfoCount: 1,
+				pQueueCreateInfos: &queue_info,
+			};
+
+			auto res =
+				vkCreateDevice(gpus[0], &device_info, null, &device);
+			enforce(res == VkResult.VK_SUCCESS, "vkCreateDevice");
+
+			info("03-init_device");
+		}
+
         return true;
     }
 }
