@@ -13,8 +13,10 @@ struct VulkanManager
     VkInstance inst;
     VkPhysicalDevice[] gpus;
 	VkQueueFamilyProperties[] queue_props;
-	int queueFamilyIndex=-1;
+	int queue_family_index=-1;
 	VkDevice device;
+	VkCommandPool cmd_pool;
+	VkCommandBuffer cmd;
 
 	static this()
 	{
@@ -32,9 +34,8 @@ struct VulkanManager
 
     bool initialize()
     {
+		// 01-init_instance
         {
-            // 01
-
             // initialize the VkApplicationInfo structure
             VkApplicationInfo app_info = {
                 pApplicationName: "VulkanOnD",
@@ -51,7 +52,7 @@ struct VulkanManager
                 if(res == VkResult.VK_ERROR_INCOMPATIBLE_DRIVER) {
                     error("cannot find a compatible Vulkan ICD");
                     return false;
-                } 
+                }
                 else  {
                     error("unknown error");
                     return false;
@@ -63,8 +64,8 @@ struct VulkanManager
 			info("01-init_instance");
         }
 
+		// 02-enumerate_devices
         {
-            // 02
             uint gpu_count = 1;
             auto res =
                 vkEnumeratePhysicalDevices(inst, &gpu_count, null);
@@ -76,8 +77,8 @@ struct VulkanManager
 			info("02-enumerate_devices");
         }
 
+		// 03-init_device
 		{
-			// 03
 			uint queue_family_count;
 			vkGetPhysicalDeviceQueueFamilyProperties(gpus[0],
 													 &queue_family_count, null);
@@ -88,15 +89,15 @@ struct VulkanManager
 													 gpus[0], &queue_family_count, queue_props.ptr);
 			enforce(queue_family_count >= 1);
 
-			queueFamilyIndex = -1;
+			queue_family_index = -1;
 			for(int i=0; i<queue_props.length; ++i)
 			{
 				if(queue_props[i].queueFlags & VkQueueFlagBits.VK_QUEUE_GRAPHICS_BIT){
-					queueFamilyIndex=i;
+					queue_family_index=i;
 					break;
 				}
 			}
-			enforce(queueFamilyIndex>= 0);
+			enforce(queue_family_index>= 0);
 
 			VkDeviceQueueCreateInfo queue_info={
 				queueCount: 1,
@@ -113,6 +114,30 @@ struct VulkanManager
 			enforce(res == VkResult.VK_SUCCESS, "vkCreateDevice");
 
 			info("03-init_device");
+		}
+
+		// 04-init_command_buffer
+		{
+			/* Create a command pool to allocate our command buffer from */
+			VkCommandPoolCreateInfo cmd_pool_info = {
+				queueFamilyIndex: queue_family_index,
+			};
+
+			auto res =
+				vkCreateCommandPool(device, &cmd_pool_info, null, &cmd_pool);
+			enforce(res == VK_SUCCESS, "vkCreateCommandPool");
+
+			/* Create the command buffer from the command pool */
+			VkCommandBufferAllocateInfo cmd_info = {
+				commandPool: cmd_pool,
+				level: VkCommandBufferLevel.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+				commandBufferCount: 1,
+			};
+
+			res = vkAllocateCommandBuffers(device, &cmd_info, &cmd);
+			enforce(res == VkResult.VK_SUCCESS, "vkAllocateCommandBuffers");
+
+			info("04-init_command_buffer");
 		}
 
         return true;
@@ -160,7 +185,7 @@ struct Glfw3Manager
 }
 
 
-void main() 
+void main()
 {
 	// logger
     auto defaultFileLogger=cast(FileLogger)sharedLog;
