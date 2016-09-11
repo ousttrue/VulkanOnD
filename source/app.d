@@ -57,6 +57,9 @@ struct VulkanManager
 	VkDescriptorSetLayout[] desc_layout;
 	VkPipelineLayout pipeline_layout;
 
+	VkDescriptorPool desc_pool;
+	VkDescriptorSet[] desc_set;
+
 	static this()
 	{
 		log("DVulkanDerelict.load.");
@@ -67,6 +70,8 @@ struct VulkanManager
     ~this()
     {
 		log("~VulkanManager");
+
+		vkDestroyDescriptorPool(device, desc_pool, NULL);
 
 		for (int i = 0; i < NUM_DESCRIPTOR_SETS; i++)
 			vkDestroyDescriptorSetLayout(device, desc_layout[i], NULL);
@@ -242,6 +247,50 @@ struct VulkanManager
 			return false;
 		}
 		info("08-init_pipeline_layout");
+
+		// 09-init_descriptor_set
+		{
+			auto type_count=new VkDescriptorPoolSize[1];
+			type_count[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			type_count[0].descriptorCount = 1;
+
+			VkDescriptorPoolCreateInfo descriptor_pool = {};
+			descriptor_pool.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+			descriptor_pool.pNext = NULL;
+			descriptor_pool.maxSets = 1;
+			descriptor_pool.poolSizeCount = type_count.length;
+			descriptor_pool.pPoolSizes = type_count.ptr;
+
+			auto res = vkCreateDescriptorPool(device, &descriptor_pool, NULL,
+										 &desc_pool);
+			assert(res == VK_SUCCESS);
+
+			auto alloc_info=new VkDescriptorSetAllocateInfo[1];
+			alloc_info[0].sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+			alloc_info[0].pNext = NULL;
+			alloc_info[0].descriptorPool = desc_pool;
+			alloc_info[0].descriptorSetCount = desc_layout.length;
+			alloc_info[0].pSetLayouts = desc_layout.ptr;
+
+			desc_set=new VkDescriptorSet[desc_layout.length];
+			res =
+				vkAllocateDescriptorSets(device, alloc_info.ptr, desc_set.ptr);
+			assert(res == VK_SUCCESS);
+
+			auto writes=new VkWriteDescriptorSet[1];
+
+			writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writes[0].pNext = NULL;
+			writes[0].dstSet = desc_set[0];
+			writes[0].descriptorCount = 1;
+			writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			writes[0].pBufferInfo = &uniform_data.buffer_info;
+			writes[0].dstArrayElement = 0;
+			writes[0].dstBinding = 0;
+
+			vkUpdateDescriptorSets(device, 1, writes.ptr, 0, NULL);
+		}
+		info("09-init_descriptor_set");
 
         return true;
     }
@@ -612,7 +661,7 @@ struct VulkanManager
 		view_info.flags = 0;
 
 
-		//info.depth.format = depth_format;
+		//depth.format = depth_format;
 
 		/* Create image */
 		auto res = vkCreateImage(device, &image_info, null, &depth.image);
