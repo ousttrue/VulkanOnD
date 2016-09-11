@@ -15,6 +15,9 @@ import core.stdc.string;
 import gfm.math;
 
 
+immutable NUM_DESCRIPTOR_SETS=1;
+
+
 struct VulkanManager
 {
     VkInstance inst;
@@ -51,6 +54,9 @@ struct VulkanManager
     };
 	uniform_buffer uniform_data;
 
+	VkDescriptorSetLayout[] desc_layout;
+	VkPipelineLayout pipeline_layout;
+
 	static this()
 	{
 		log("DVulkanDerelict.load.");
@@ -61,6 +67,10 @@ struct VulkanManager
     ~this()
     {
 		log("~VulkanManager");
+
+		for (int i = 0; i < NUM_DESCRIPTOR_SETS; i++)
+			vkDestroyDescriptorSetLayout(device, desc_layout[i], NULL);
+		vkDestroyPipelineLayout(device, pipeline_layout, NULL);
 
 		vkDestroyBuffer(device, uniform_data.buf, NULL);
 		vkFreeMemory(device, uniform_data.mem, NULL);
@@ -224,6 +234,14 @@ struct VulkanManager
 			return false;
 		}
 		info("07-init_uniform_buffer");
+
+		// 08-init_pipeline_layout
+		if(!createPipelineLayout())
+		{
+			error("fail to createPipelineLayout");
+			return false;
+		}
+		info("08-init_pipeline_layout");
 
         return true;
     }
@@ -699,6 +717,54 @@ struct VulkanManager
 		uniform_data.buffer_info.buffer = uniform_data.buf;
 		uniform_data.buffer_info.offset = 0;
 		uniform_data.buffer_info.range = MVP.sizeof;
+
+		return true;
+	}
+
+	bool createPipelineLayout()
+	{
+		/* Start with just our uniform buffer that has our transformation matrices
+		* (for the vertex shader). The fragment shader we intend to use needs no
+		* external resources, so nothing else is necessary
+		*/
+
+		/* Note that when we start using textures, this is where our sampler will
+		* need to be specified
+		*/
+		VkDescriptorSetLayoutBinding layout_binding = {};
+		layout_binding.binding = 0;
+		layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		layout_binding.descriptorCount = 1;
+		layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+		layout_binding.pImmutableSamplers = NULL;
+
+		/* Next take layout bindings and use them to create a descriptor set layout
+		*/
+		VkDescriptorSetLayoutCreateInfo descriptor_layout = {};
+		descriptor_layout.sType =
+			VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		descriptor_layout.pNext = NULL;
+		descriptor_layout.bindingCount = 1;
+		descriptor_layout.pBindings = &layout_binding;
+
+		desc_layout=new VkDescriptorSetLayout[NUM_DESCRIPTOR_SETS];
+		auto res = vkCreateDescriptorSetLayout(device, &descriptor_layout, NULL,
+										  desc_layout.ptr);
+		assert(res == VK_SUCCESS);
+
+		/* Now use the descriptor layout to create a pipeline layout */
+		VkPipelineLayoutCreateInfo pPipelineLayoutCreateInfo = {};
+		pPipelineLayoutCreateInfo.sType =
+			VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pPipelineLayoutCreateInfo.pNext = NULL;
+		pPipelineLayoutCreateInfo.pushConstantRangeCount = 0;
+		pPipelineLayoutCreateInfo.pPushConstantRanges = NULL;
+		pPipelineLayoutCreateInfo.setLayoutCount = NUM_DESCRIPTOR_SETS;
+		pPipelineLayoutCreateInfo.pSetLayouts = desc_layout.ptr;
+
+		res = vkCreatePipelineLayout(device, &pPipelineLayoutCreateInfo, NULL,
+									 &pipeline_layout);
+		assert(res == VK_SUCCESS);
 
 		return true;
 	}
