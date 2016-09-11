@@ -4,3 +4,8 @@ authors "oustrrue"
 copyright "Copyright © 2016, oustrrue"
 license "MIT"
 dependency "derelict-glfw3" version="~>3.1.0"
+
+//dependency "d-vulkan" version="~>0.3.1"
+//subConfiguration "d-vulkan" "with-derelict-loader"
+dependency "d-vulkan" version="~master"
+

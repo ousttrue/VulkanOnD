@@ -6,4 +6,6 @@ __dummy.html
 *.obj
 /*.dll
 /*.exe
+.vs
+*.sln
 
