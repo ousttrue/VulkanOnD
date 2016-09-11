@@ -16,6 +16,7 @@ import gfm.math;
 
 
 immutable NUM_DESCRIPTOR_SETS=1;
+immutable NUM_SAMPLES=VK_SAMPLE_COUNT_1_BIT;
 
 
 struct VulkanManager
@@ -23,10 +24,17 @@ struct VulkanManager
     VkInstance inst;
     VkPhysicalDevice[] gpus;
 	VkQueueFamilyProperties[] queue_props;
-	int queue_family_index=-1;
-	VkDevice device;
+
+    VkDevice device;
+    VkQueue graphics_queue;
+    VkQueue present_queue;
+	uint graphics_queue_family_index;
+	uint present_queue_family_index;
+
 	VkCommandPool cmd_pool;
 	VkCommandBuffer cmd;
+
+	VkFormat format;
 	VkSurfaceKHR surface;
 	VkSwapchainKHR swap_chain;
 	struct swap_chain_buffer
@@ -60,6 +68,11 @@ struct VulkanManager
 	VkDescriptorPool desc_pool;
 	VkDescriptorSet[] desc_set;
 
+    uint current_buffer;
+    VkRenderPass render_pass;
+	VkSemaphore imageAcquiredSemaphore;
+
+
 	static this()
 	{
 		log("DVulkanDerelict.load.");
@@ -70,6 +83,9 @@ struct VulkanManager
     ~this()
     {
 		log("~VulkanManager");
+
+		vkDestroyRenderPass(device, render_pass, NULL);
+		vkDestroySemaphore(device, imageAcquiredSemaphore, NULL);
 
 		vkDestroyDescriptorPool(device, desc_pool, NULL);
 
@@ -157,15 +173,15 @@ struct VulkanManager
 													 gpus[0], &queue_family_count, queue_props.ptr);
 			enforce(queue_family_count >= 1);
 
-			queue_family_index = -1;
+			graphics_queue_family_index = -1;
 			for(int i=0; i<queue_props.length; ++i)
 			{
 				if(queue_props[i].queueFlags & VkQueueFlagBits.VK_QUEUE_GRAPHICS_BIT){
-					queue_family_index=i;
+					graphics_queue_family_index=i;
 					break;
 				}
 			}
-			enforce(queue_family_index>= 0);
+			enforce(graphics_queue_family_index>= 0);
 
 			/*
 			VkDeviceQueueCreateInfo queue_info={
@@ -191,32 +207,6 @@ struct VulkanManager
 			info("03-init_device");
 		}
 
-		/+
-		// 04-init_command_buffer
-		{
-			/* Create a command pool to allocate our command buffer from */
-			VkCommandPoolCreateInfo cmd_pool_info = {
-			queueFamilyIndex: queue_family_index,
-			};
-
-			auto res =
-				vkCreateCommandPool(device, &cmd_pool_info, null, &cmd_pool);
-			enforce(res == VK_SUCCESS, "vkCreateCommandPool");
-
-			/* Create the command buffer from the command pool */
-			VkCommandBufferAllocateInfo cmd_info = {
-			commandPool: cmd_pool,
-			level: VkCommandBufferLevel.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-			commandBufferCount: 1,
-			};
-
-			res = vkAllocateCommandBuffers(device, &cmd_info, &cmd);
-			enforce(res == VkResult.VK_SUCCESS, "vkAllocateCommandBuffers");
-
-			info("04-init_command_buffer");
-		}
-		+/
-
 		int width=50;
 		int height=50;
 
@@ -226,6 +216,11 @@ struct VulkanManager
 			error("fail to createSwapchain");
 			return false;
 		}
+
+		init_command_pool();
+		init_command_buffer();
+		execute_begin_command_buffer();
+		init_device_queue();
 
 		// 06-init_depth_buffer
 		if(!createDepthBuffer(width, height)){
@@ -292,8 +287,230 @@ struct VulkanManager
 		}
 		info("09-init_descriptor_set");
 
+		// 10-init_render_pass
+		{
+			// A semaphore (or fence) is required in order to acquire a
+			// swapchain image to prepare it for use in a render pass.
+			// The semaphore is normally used to hold back the rendering
+			// operation until the image is actually available.
+			// But since this sample does not render, the semaphore
+			// ends up being unused.
+			VkSemaphoreCreateInfo imageAcquiredSemaphoreCreateInfo;
+			imageAcquiredSemaphoreCreateInfo.sType =
+				VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+			imageAcquiredSemaphoreCreateInfo.pNext = NULL;
+			imageAcquiredSemaphoreCreateInfo.flags = 0;
+
+			auto res = vkCreateSemaphore(device, &imageAcquiredSemaphoreCreateInfo,
+									NULL, &imageAcquiredSemaphore);
+			assert(res == VK_SUCCESS);
+
+			// Acquire the swapchain image in order to set its layout
+			res = vkAcquireNextImageKHR(device, swap_chain, ulong.max,
+										imageAcquiredSemaphore, 0,
+										&current_buffer);
+			assert(res >= 0);
+
+			// Set the layout for the color buffer, transitioning it from
+			// undefined to an optimal color attachment to make it usable in
+			// a render pass.
+			// The depth buffer layout has already been set by init_depth_buffer().
+			set_image_layout(buffers[current_buffer].image,
+							 VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+							 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+			// Stop recording the command buffer here since this sample will not
+			// actually put the render pass in the command buffer (via vkCmdBeginRenderPass).
+			// An actual application might leave the command buffer in recording mode
+			// and insert a BeginRenderPass command after the image layout transition
+			// memory barrier commands.
+			// This sample simply creates and defines the render pass.
+			//execute_end_command_buffer(info);
+			res = vkEndCommandBuffer(cmd);
+			assert(res == VK_SUCCESS);
+
+			/* Need attachments for render target and depth buffer */
+			auto attachments=new VkAttachmentDescription[2];
+			attachments[0].format = format;
+			attachments[0].samples = NUM_SAMPLES;
+			attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+			attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+			attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+			attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+			attachments[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+			attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+			attachments[0].flags = 0;
+
+			attachments[1].format = depth.format;
+			attachments[1].samples = NUM_SAMPLES;
+			attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+			attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+			attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+			attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+			attachments[1].initialLayout =
+				VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+			attachments[1].finalLayout =
+				VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+			attachments[1].flags = 0;
+
+			VkAttachmentReference color_reference = {};
+			color_reference.attachment = 0;
+			color_reference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+			VkAttachmentReference depth_reference = {};
+			depth_reference.attachment = 1;
+			depth_reference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+			VkSubpassDescription subpass = {};
+			subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+			subpass.flags = 0;
+			subpass.inputAttachmentCount = 0;
+			subpass.pInputAttachments = NULL;
+			subpass.colorAttachmentCount = 1;
+			subpass.pColorAttachments = &color_reference;
+			subpass.pResolveAttachments = NULL;
+			subpass.pDepthStencilAttachment = &depth_reference;
+			subpass.preserveAttachmentCount = 0;
+			subpass.pPreserveAttachments = NULL;
+
+			VkRenderPassCreateInfo rp_info = {};
+			rp_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+			rp_info.pNext = NULL;
+			rp_info.attachmentCount = 2;
+			rp_info.pAttachments = attachments.ptr;
+			rp_info.subpassCount = 1;
+			rp_info.pSubpasses = &subpass;
+			rp_info.dependencyCount = 0;
+			rp_info.pDependencies = NULL;
+
+			res = vkCreateRenderPass(device, &rp_info, NULL, &render_pass);
+			assert(res == VK_SUCCESS);
+
+		}
+		info("10-init_render_pass");
+
         return true;
     }
+
+	void init_command_pool() {
+		/* DEPENDS on init_swapchain_extension() */
+		VkCommandPoolCreateInfo cmd_pool_info = {};
+		cmd_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		cmd_pool_info.pNext = NULL;
+		cmd_pool_info.queueFamilyIndex = graphics_queue_family_index;
+		cmd_pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+
+		auto res =
+			vkCreateCommandPool(device, &cmd_pool_info, NULL, &cmd_pool);
+		assert(res == VK_SUCCESS);
+	}
+
+	void init_command_buffer() {
+		/* DEPENDS on init_swapchain_extension() and init_command_pool() */
+		VkCommandBufferAllocateInfo cmd_info = {};
+		cmd_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		cmd_info.pNext = NULL;
+		cmd_info.commandPool = cmd_pool;
+		cmd_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		cmd_info.commandBufferCount = 1;
+
+		auto res = vkAllocateCommandBuffers(device, &cmd_info, &cmd);
+		assert(res == VK_SUCCESS);
+	}
+
+	void execute_begin_command_buffer() {
+		/* DEPENDS on init_command_buffer() */
+
+		VkCommandBufferBeginInfo cmd_buf_info = {};
+		cmd_buf_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		cmd_buf_info.pNext = NULL;
+		cmd_buf_info.flags = 0;
+		cmd_buf_info.pInheritanceInfo = NULL;
+
+		auto res = vkBeginCommandBuffer(cmd, &cmd_buf_info);
+		assert(res == VK_SUCCESS);
+	}
+
+	void init_device_queue() {
+		/* DEPENDS on init_swapchain_extension() */
+
+		vkGetDeviceQueue(device, graphics_queue_family_index, 0,
+						 &graphics_queue);
+		if (graphics_queue_family_index == present_queue_family_index) {
+			present_queue = graphics_queue;
+		} else {
+			vkGetDeviceQueue(device, present_queue_family_index, 0,
+							 &present_queue);
+		}
+	}
+
+	void set_image_layout(VkImage image,
+						  VkImageAspectFlags aspectMask,
+						  VkImageLayout old_image_layout,
+						  VkImageLayout new_image_layout) {
+							  /* DEPENDS on cmd and queue initialized */
+
+							  assert(cmd != VkCommandBuffer.init);
+							  assert(graphics_queue != VkQueue.init);
+
+							  VkImageMemoryBarrier image_memory_barrier = {};
+							  image_memory_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+							  image_memory_barrier.pNext = NULL;
+							  image_memory_barrier.srcAccessMask = 0;
+							  image_memory_barrier.dstAccessMask = 0;
+							  image_memory_barrier.oldLayout = old_image_layout;
+							  image_memory_barrier.newLayout = new_image_layout;
+							  image_memory_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+							  image_memory_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+							  image_memory_barrier.image = image;
+							  image_memory_barrier.subresourceRange.aspectMask = aspectMask;
+							  image_memory_barrier.subresourceRange.baseMipLevel = 0;
+							  image_memory_barrier.subresourceRange.levelCount = 1;
+							  image_memory_barrier.subresourceRange.baseArrayLayer = 0;
+							  image_memory_barrier.subresourceRange.layerCount = 1;
+
+							  if (old_image_layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+								  image_memory_barrier.srcAccessMask =
+									  VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+							  }
+
+							  if (new_image_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+								  image_memory_barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+							  }
+
+							  if (new_image_layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+								  image_memory_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+							  }
+
+							  if (old_image_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+								  image_memory_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+							  }
+
+							  if (old_image_layout == VK_IMAGE_LAYOUT_PREINITIALIZED) {
+								  image_memory_barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+							  }
+
+							  if (new_image_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+								  image_memory_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+							  }
+
+							  if (new_image_layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+								  image_memory_barrier.dstAccessMask =
+									  VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+							  }
+
+							  if (new_image_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+								  image_memory_barrier.dstAccessMask =
+									  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+							  }
+
+							  VkPipelineStageFlags src_stages = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+							  VkPipelineStageFlags dest_stages = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+
+							  vkCmdPipelineBarrier(cmd, src_stages, dest_stages, 0, 0, NULL, 0, NULL,
+												   1, &image_memory_barrier);
+						  }
+
 
 	void enforceVkResult(VkResult res, string msg)
 	{
@@ -355,8 +572,8 @@ struct VulkanManager
 
 		// Search for a graphics and a present queue in the array of queue
 		// families, try to find one that supports both
-		auto graphics_queue_family_index = uint.max;
-		auto present_queue_family_index = uint.max;
+		graphics_queue_family_index = uint.max;
+		present_queue_family_index = uint.max;
 		foreach(i, ref prop; queue_props){
 			if ((prop.queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0) {
 				if (graphics_queue_family_index == uint.max){
@@ -410,7 +627,6 @@ struct VulkanManager
 		// If the format list includes just one entry of VK_FORMAT_UNDEFINED,
 		// the surface has no preferred format.  Otherwise, at least one
 		// supported format will be returned.
-		VkFormat format;
 		if (formatCount == 1 && surfFormats[0].format == VkFormat.VK_FORMAT_UNDEFINED) {
 			format = VK_FORMAT_B8G8R8A8_UNORM;
 		} 
