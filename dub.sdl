@@ -9,3 +9,5 @@ dependency "derelict-glfw3" version="~>3.1.0"
 //subConfiguration "d-vulkan" "with-derelict-loader"
 dependency "d-vulkan" version="~master"
 
+dependency "gfm:math" version="~>6.1.2"
+

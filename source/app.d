@@ -11,6 +11,8 @@ import std.range;
 import std.conv;
 import std.traits;
 import core.sys.windows.windows;
+import core.stdc.string;
+import gfm.math;
 
 
 struct VulkanManager
@@ -41,6 +43,14 @@ struct VulkanManager
     };
 	depth_buffer depth;
 
+	mat4x4!float MVP;
+    struct uniform_buffer {
+        VkBuffer buf;
+        VkDeviceMemory mem;
+        VkDescriptorBufferInfo buffer_info;
+    };
+	uniform_buffer uniform_data;
+
 	static this()
 	{
 		log("DVulkanDerelict.load.");
@@ -51,6 +61,9 @@ struct VulkanManager
     ~this()
     {
 		log("~VulkanManager");
+
+		vkDestroyBuffer(device, uniform_data.buf, NULL);
+		vkFreeMemory(device, uniform_data.mem, NULL);
 
 		vkDestroyImageView(device, depth.view, null);
 		vkDestroyImage(device, depth.image, null);
@@ -204,6 +217,13 @@ struct VulkanManager
 			error("fail to createDepthBuffer");
 			return false;
 		}
+
+		// 07-init_uniform_buffer
+		if(!createUniformBuffer()){
+			error("fali to createUniformBuffer");
+			return false;
+		}
+		info("07-init_uniform_buffer");
 
         return true;
     }
@@ -627,6 +647,60 @@ struct VulkanManager
 		}
 		// No memory types matched, return failure
 		return false;
+	}
+
+	bool createUniformBuffer()
+	{
+		VkBufferCreateInfo buf_info;
+		buf_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		buf_info.pNext = NULL;
+		buf_info.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+		buf_info.size = MVP.sizeof;
+		buf_info.queueFamilyIndexCount = 0;
+		buf_info.pQueueFamilyIndices = NULL;
+		buf_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		buf_info.flags = 0;
+		auto res = vkCreateBuffer(device, &buf_info, null, &uniform_data.buf);
+		assert(res == VK_SUCCESS);
+
+		VkMemoryRequirements mem_reqs;
+		vkGetBufferMemoryRequirements(device, uniform_data.buf,
+									  &mem_reqs);
+
+		VkMemoryAllocateInfo alloc_info = {};
+		alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		alloc_info.pNext = NULL;
+		alloc_info.memoryTypeIndex = 0;
+
+		alloc_info.allocationSize = mem_reqs.size;
+		auto pass = memory_type_from_properties(mem_reqs.memoryTypeBits,
+										   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+										   &alloc_info.memoryTypeIndex);
+		assert(pass && "No mappable, coherent memory");
+
+		res = vkAllocateMemory(device, &alloc_info, NULL,
+							   &(uniform_data.mem));
+		assert(res == VK_SUCCESS);
+
+		uint *pData;
+		res = vkMapMemory(device, uniform_data.mem, 0, mem_reqs.size, 0,
+						  cast(void**)&pData);
+		assert(res == VK_SUCCESS);
+
+		memcpy(pData, MVP.ptr, MVP.sizeof);
+
+		vkUnmapMemory(device, uniform_data.mem);
+
+		res = vkBindBufferMemory(device, uniform_data.buf,
+								 uniform_data.mem, 0);
+		assert(res == VK_SUCCESS);
+
+		uniform_data.buffer_info.buffer = uniform_data.buf;
+		uniform_data.buffer_info.offset = 0;
+		uniform_data.buffer_info.range = MVP.sizeof;
+
+		return true;
 	}
 }
 
