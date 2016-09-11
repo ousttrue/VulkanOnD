@@ -31,6 +31,16 @@ struct VulkanManager
 	};
 	swap_chain_buffer[] buffers;
 
+	struct depth_buffer
+	{
+        VkFormat format;
+
+        VkImage image;
+        VkDeviceMemory mem;
+        VkImageView view;
+    };
+	depth_buffer depth;
+
 	static this()
 	{
 		log("DVulkanDerelict.load.");
@@ -41,6 +51,10 @@ struct VulkanManager
     ~this()
     {
 		log("~VulkanManager");
+
+		vkDestroyImageView(device, depth.view, null);
+		vkDestroyImage(device, depth.image, null);
+		vkFreeMemory(device, depth.mem, null);
 
 		for (uint i = 0; i < buffers.length; i++) {
 			vkDestroyImageView(device, buffers[i].view, null);
@@ -175,8 +189,19 @@ struct VulkanManager
 		}
 		+/
 
+		int width=50;
+		int height=50;
+
 		// 05-init_swapchain
-		if(!createSwapchain(hinstance, hwnd)){
+		if(!createSwapchain(hinstance, hwnd
+							, width, height)){
+			error("fail to createSwapchain");
+			return false;
+		}
+
+		// 06-init_depth_buffer
+		if(!createDepthBuffer(width, height)){
+			error("fail to createDepthBuffer");
 			return false;
 		}
 
@@ -208,10 +233,9 @@ struct VulkanManager
 		HWND hwnd;
 	};
 
-	bool createSwapchain(HINSTANCE hinstance, HWND hwnd)
+	bool createSwapchain(HINSTANCE hinstance, HWND hwnd
+						 , int width, int height)
 	{
-		info("05-init_swapchain");
-
 		alias PFN_vkCreateWin32SurfaceKHR
 			= extern(C) VkResult function(VkInstance instance,
 										  const(VkWin32SurfaceCreateInfoKHR)* pCreateInfo
@@ -324,8 +348,6 @@ struct VulkanManager
 		assert(res == VK_SUCCESS);
 
 		VkExtent2D swapchainExtent;
-		auto width=50;
-		auto height=50;
 		// width and height are either both 0xFFFFFFFF, or both not 0xFFFFFFFF.
 		if (surfCapabilities.currentExtent.width == 0xFFFFFFFF) {
 			// If the surface size is undefined, the size is set to
@@ -464,6 +486,7 @@ struct VulkanManager
 			assert(res == VK_SUCCESS);
 		}
 
+		info("05-init_swapchain");
 		return true;
 	}
 
@@ -486,6 +509,124 @@ struct VulkanManager
 		auto res = vkCreateDevice(gpus[0], &device_info, NULL, &device);
 
 		return res==VkResult.VK_SUCCESS;
+	}
+
+	bool createDepthBuffer(int width, int height)
+	{
+		const VkFormat depth_format = VK_FORMAT_D16_UNORM;
+		VkFormatProperties props;
+		vkGetPhysicalDeviceFormatProperties(gpus[0], depth_format, &props);
+
+		VkImageCreateInfo image_info;
+		if (props.linearTilingFeatures &
+			VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+				image_info.tiling = VK_IMAGE_TILING_LINEAR;
+		} 
+		else if (props.optimalTilingFeatures &
+				 VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) 
+		{
+			image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+		} 
+		else 
+		{
+			/* Try other depth formats? */
+			fatal("VK_FORMAT_D16_UNORM Unsupported.");
+		}
+
+		image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		image_info.pNext = NULL;
+		image_info.imageType = VK_IMAGE_TYPE_2D;
+		image_info.format = depth_format;
+		image_info.extent.width = width;
+		image_info.extent.height = height;
+		image_info.extent.depth = 1;
+		image_info.mipLevels = 1;
+		image_info.arrayLayers = 1;
+		image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+		image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		image_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+		image_info.queueFamilyIndexCount = 0;
+		image_info.pQueueFamilyIndices = NULL;
+		image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		image_info.flags = 0;
+
+		VkMemoryAllocateInfo mem_alloc;
+		mem_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		mem_alloc.pNext = NULL;
+		mem_alloc.allocationSize = 0;
+		mem_alloc.memoryTypeIndex = 0;
+
+		VkImageViewCreateInfo view_info;
+		view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		view_info.pNext = NULL;
+		//view_info.image = VK_NULL_HANDLE;
+		view_info.format = depth_format;
+		view_info.components.r = VK_COMPONENT_SWIZZLE_R;
+		view_info.components.g = VK_COMPONENT_SWIZZLE_G;
+		view_info.components.b = VK_COMPONENT_SWIZZLE_B;
+		view_info.components.a = VK_COMPONENT_SWIZZLE_A;
+		view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+		view_info.subresourceRange.baseMipLevel = 0;
+		view_info.subresourceRange.levelCount = 1;
+		view_info.subresourceRange.baseArrayLayer = 0;
+		view_info.subresourceRange.layerCount = 1;
+		view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		view_info.flags = 0;
+
+
+		//info.depth.format = depth_format;
+
+		/* Create image */
+		auto res = vkCreateImage(device, &image_info, null, &depth.image);
+		assert(res == VK_SUCCESS);
+
+		VkMemoryRequirements mem_reqs;
+		vkGetImageMemoryRequirements(device, depth.image, &mem_reqs);
+
+		mem_alloc.allocationSize = mem_reqs.size;
+		/* Use the memory properties to determine the type of memory required */
+		auto pass = memory_type_from_properties(mem_reqs.memoryTypeBits,
+										   0, /* No Requirements */
+										   &mem_alloc.memoryTypeIndex);
+		assert(pass);
+
+		/* Allocate memory */
+		res = vkAllocateMemory(device, &mem_alloc, null, &depth.mem);
+		assert(res == VK_SUCCESS);
+
+		/* Bind memory */
+		res = vkBindImageMemory(device, depth.image, depth.mem, 0);
+		assert(res == VK_SUCCESS);
+
+		/* Create image view */
+		view_info.image = depth.image;
+		res = vkCreateImageView(device, &view_info, null, &depth.view);
+		assert(res == VK_SUCCESS);
+
+		info("06-init_depth_buffer");
+		return true;
+	}
+
+	bool memory_type_from_properties(uint typeBits,
+									 VkFlags requirements_mask,
+									 uint32_t *typeIndex) 
+	{
+		VkPhysicalDeviceMemoryProperties memory_properties;
+		vkGetPhysicalDeviceMemoryProperties(gpus[0], &memory_properties);
+		// Search memtypes to find first index with those properties
+		for (uint i = 0; i < memory_properties.memoryTypeCount; i++) {
+			if ((typeBits & 1) == 1) {
+				// Type is available, does it match user properties?
+				if ((memory_properties.memoryTypes[i].propertyFlags &
+					 requirements_mask) == requirements_mask) {
+						 *typeIndex = i;
+						 return true;
+					 }
+			}
+			typeBits >>= 1;
+		}
+		// No memory types matched, return failure
+		return false;
 	}
 }
 
