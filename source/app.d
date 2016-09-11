@@ -41,6 +41,11 @@ struct VulkanManager
     ~this()
     {
 		log("~VulkanManager");
+
+		for (uint i = 0; i < buffers.length; i++) {
+			vkDestroyImageView(device, buffers[i].view, null);
+		}
+		vkDestroySwapchainKHR(device, swap_chain, null);
 		vkDestroyDevice(device, null);
         vkDestroyInstance(inst, null);
     }
@@ -434,31 +439,31 @@ struct VulkanManager
 			return buffer;
 		}).array;
 
-		/+
-		for (uint32_t i = 0; i < info.swapchainImageCount; i++) {
-		VkImageViewCreateInfo color_image_view = {};
-		color_image_view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-		color_image_view.pNext = NULL;
-		color_image_view.flags = 0;
-		color_image_view.image = info.buffers[i].image;
-		color_image_view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		color_image_view.format = info.format;
-		color_image_view.components.r = VK_COMPONENT_SWIZZLE_R;
-		color_image_view.components.g = VK_COMPONENT_SWIZZLE_G;
-		color_image_view.components.b = VK_COMPONENT_SWIZZLE_B;
-		color_image_view.components.a = VK_COMPONENT_SWIZZLE_A;
-		color_image_view.subresourceRange.aspectMask =
-		VK_IMAGE_ASPECT_COLOR_BIT;
-		color_image_view.subresourceRange.baseMipLevel = 0;
-		color_image_view.subresourceRange.levelCount = 1;
-		color_image_view.subresourceRange.baseArrayLayer = 0;
-		color_image_view.subresourceRange.layerCount = 1;
+		for (uint i = 0; i < swapchainImageCount; i++) {
+			VkImageViewCreateInfo color_image_view = {
+				image : buffers[i].image,
+				viewType : VK_IMAGE_VIEW_TYPE_2D,
+				format : format,
+				components: {
+					r : VK_COMPONENT_SWIZZLE_R,
+					g : VK_COMPONENT_SWIZZLE_G,
+					b : VK_COMPONENT_SWIZZLE_B,
+					a : VK_COMPONENT_SWIZZLE_A,
+				},
+				subresourceRange:{
+					aspectMask :VK_IMAGE_ASPECT_COLOR_BIT,
+					baseMipLevel : 0,
+					levelCount : 1,
+					baseArrayLayer : 0,
+					layerCount : 1,
+				},
+			};
 
-		res = vkCreateImageView(info.device, &color_image_view, NULL,
-		&info.buffers[i].view);
-		assert(res == VK_SUCCESS);
+			res = vkCreateImageView(device, &color_image_view, null,
+									&buffers[i].view);
+			assert(res == VK_SUCCESS);
+		}
 
-		+/
 		return true;
 	}
 
