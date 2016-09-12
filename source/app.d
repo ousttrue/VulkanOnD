@@ -10,6 +10,7 @@ import std.algorithm;
 import std.range;
 import std.conv;
 import std.traits;
+import std.file;
 import core.sys.windows.windows;
 import core.stdc.string;
 import gfm.math;
@@ -72,6 +73,7 @@ struct VulkanManager
     VkRenderPass render_pass;
 	VkSemaphore imageAcquiredSemaphore;
 
+    VkPipelineShaderStageCreateInfo[2] shaderStages;
 
 	static this()
 	{
@@ -83,6 +85,9 @@ struct VulkanManager
     ~this()
     {
 		log("~VulkanManager");
+
+		vkDestroyShaderModule(device, shaderStages[0]._module, NULL);
+		vkDestroyShaderModule(device, shaderStages[1]._module, NULL);
 
 		vkDestroyRenderPass(device, render_pass, NULL);
 		vkDestroySemaphore(device, imageAcquiredSemaphore, NULL);
@@ -389,8 +394,40 @@ struct VulkanManager
 		}
 		info("10-init_render_pass");
 
+		// 11-init_shaders
+		if(!init_shaders("cube-vert.spv", "cube-frag.spv")){
+			return false;
+		}
+		info("11-init_shaders");
+
         return true;
     }
+
+	bool init_shaders(string vertSpv, string fragSpv)
+	{
+		/* VULKAN_KEY_START */
+		{
+			auto vtx_spv=read(vertSpv);
+			VkShaderModuleCreateInfo moduleCreateInfo;
+			moduleCreateInfo.codeSize = vtx_spv.length;
+			moduleCreateInfo.pCode = cast(uint*)vtx_spv.ptr;
+			auto res = vkCreateShaderModule(device, &moduleCreateInfo, NULL,
+									   &shaderStages[0]._module);
+			assert(res == VK_SUCCESS);
+		}
+
+		{
+			auto frag_spv=read(fragSpv);
+			VkShaderModuleCreateInfo moduleCreateInfo;
+			moduleCreateInfo.codeSize = frag_spv.length;
+			moduleCreateInfo.pCode = cast(uint*)frag_spv.ptr;
+			auto res = vkCreateShaderModule(device, &moduleCreateInfo, NULL,
+									   &shaderStages[1]._module);
+			assert(res == VK_SUCCESS);
+		}
+
+		return true;
+	}
 
 	void init_command_pool() {
 		/* DEPENDS on init_swapchain_extension() */
