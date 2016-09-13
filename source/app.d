@@ -1,5 +1,5 @@
 version = DVulkanAllExtensions;
-
+import cube;
 import logger;
 import derelict.glfw3.glfw3;
 mixin DerelictGLFW3_WindowsBind;
@@ -11,6 +11,7 @@ import std.range;
 import std.conv;
 import std.traits;
 import std.file;
+import std.string;
 import core.sys.windows.windows;
 import core.stdc.string;
 import gfm.math;
@@ -176,6 +177,7 @@ struct sample_info
     VkInstance inst;
 
 	string[] device_extension_names;
+	string[] device_layer_names;
 	VkExtensionProperties[] device_extension_properties;
 	VkPhysicalDevice[] gpus;
     VkDevice device;
@@ -250,12 +252,13 @@ struct sample_info
     VkDescriptorPool desc_pool;
 	VkDescriptorSet[] desc_set;
 
-	/*
-    PFN_vkCreateDebugReportCallbackEXT dbgCreateDebugReportCallback;
-    PFN_vkDestroyDebugReportCallbackEXT dbgDestroyDebugReportCallback;
-    PFN_vkDebugReportMessageEXT dbgBreakCallback;
+	alias PFN_vkCreateWin32SurfaceKHR
+		= extern(C) VkResult function(VkInstance instance,
+									  const(VkWin32SurfaceCreateInfoKHR)* pCreateInfo
+										  , const(VkAllocationCallbacks)* pAllocator
+											  ,VkSurfaceKHR* pSurface);
+	
 	VkDebugReportCallbackEXT[] debug_report_callbacks;
-	*/
 
     uint current_buffer;
     uint queue_family_count;
@@ -324,6 +327,7 @@ struct Glfw3Manager
 		glfwInit();
 		const window_width  = 800;
 		const window_height = 600;
+		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 		window = glfwCreateWindow(window_width, window_height
 								  , "VulkanOnD"
 								  , null, null);
@@ -339,6 +343,11 @@ struct Glfw3Manager
 		}
 		glfwPollEvents();
 		return true;
+	}
+
+	void swapBuffers()
+	{
+		glfwSwapBuffers(window);
 	}
 }
 
@@ -485,6 +494,18 @@ void init_instance_extension_names(ref sample_info info)
 	version(Windows){
 		info.instance_extension_names~=VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
 	}
+	//debug
+	{
+		info.instance_extension_names~=VK_EXT_DEBUG_REPORT_EXTENSION_NAME;
+	}
+}
+
+void init_instance_layer_names(ref sample_info info)
+{
+	//version(Debug)
+	{
+		info.instance_layer_names~="VK_LAYER_LUNARG_standard_validation";
+	}
 }
 
 VkResult init_instance(ref sample_info info,
@@ -495,7 +516,7 @@ VkResult init_instance(ref sample_info info,
 	app_info.applicationVersion = 1;
 	app_info.pEngineName = app_short_name.ptr;
 	app_info.engineVersion = 1;
-	app_info.apiVersion =  VK_MAKE_VERSION(1, 0, 0);
+	app_info.apiVersion =  VK_MAKE_VERSION(1, 0, 2);
 
 	VkInstanceCreateInfo inst_info;
 	inst_info.pApplicationInfo = &app_info;
@@ -516,25 +537,34 @@ void init_device_extension_names(ref sample_info info) {
     info.device_extension_names~=VK_KHR_SWAPCHAIN_EXTENSION_NAME;
 }
 
+void init_device_layer_names(ref sample_info info) {
+	//debug
+	{
+		info.device_layer_names~="VK_LAYER_LUNARG_standard_validation";
+	}
+}
+
 VkResult init_device(ref sample_info info) {
     VkResult res;
-    VkDeviceQueueCreateInfo queue_info = {};
+    VkDeviceQueueCreateInfo queue_info;
 
     auto queue_priorities = [0.0f];
-    queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queue_info.pNext = NULL;
     queue_info.queueCount = 1;
     queue_info.pQueuePriorities = queue_priorities.ptr;
     queue_info.queueFamilyIndex = info.graphics_queue_family_index;
 
-    VkDeviceCreateInfo device_info = {};
-    device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    device_info.pNext = NULL;
+    VkDeviceCreateInfo device_info;
     device_info.queueCreateInfoCount = 1;
     device_info.pQueueCreateInfos = &queue_info;
+
     device_info.enabledExtensionCount = info.device_extension_names.length;
 	auto device_extension_names=info.device_extension_names.map!("a.ptr").array;
     device_info.ppEnabledExtensionNames = device_extension_names.ptr;
+
+	device_info.enabledLayerCount = info.device_layer_names.length;
+	auto device_layer_names=info.device_layer_names.map!("a.ptr").array;
+	device_info.ppEnabledLayerNames      = device_layer_names.ptr;
+
     device_info.pEnabledFeatures = NULL;
 
     res = vkCreateDevice(info.gpus[0], &device_info, NULL, &info.device);
@@ -601,39 +631,19 @@ void init_queue_family_index(ref sample_info info) {
 VkResult init_debug_report_callback(ref sample_info info,
                                     PFN_vkDebugReportCallbackEXT dbgFunc) 
 {
-	/+
-	VkResult res;
-	VkDebugReportCallbackEXT debug_report_callback;
-
-	info.dbgCreateDebugReportCallback =
-		cast(PFN_vkCreateDebugReportCallbackEXT)vkGetInstanceProcAddr(
-																  info.inst, "vkCreateDebugReportCallbackEXT");
-	if (!info.dbgCreateDebugReportCallback) {
-		log( "GetInstanceProcAddr: Unable to find "
-			 "vkCreateDebugReportCallbackEXT function.");
-		return VK_ERROR_INITIALIZATION_FAILED;
-	}
-	log( "Got dbgCreateDebugReportCallback function");
-
-	info.dbgDestroyDebugReportCallback =
-		cast(PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(
-																   info.inst, "vkDestroyDebugReportCallbackEXT");
-	if (!info.dbgDestroyDebugReportCallback) {
-		log( "GetInstanceProcAddr: Unable to find "
-				"vkDestroyDebugReportCallbackEXT function.");
-		return VK_ERROR_INITIALIZATION_FAILED;
-	}
-	log( "Got dbgDestroyDebugReportCallback function");
-
-	VkDebugReportCallbackCreateInfoEXT create_info = {};
-	create_info.sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CREATE_INFO_EXT;
-	create_info.pNext = NULL;
+	VkDebugReportCallbackCreateInfoEXT create_info;
 	create_info.flags =
-		VK_DEBUG_REPORT_ERROR_BIT_EXT | VK_DEBUG_REPORT_WARNING_BIT_EXT;
+		VK_DEBUG_REPORT_ERROR_BIT_EXT 
+		| VK_DEBUG_REPORT_WARNING_BIT_EXT
+		| VK_DEBUG_REPORT_PERFORMANCE_WARNING_BIT_EXT
+		//| VK_DEBUG_REPORT_DEBUG_BIT_EXT 
+		//| VK_DEBUG_REPORT_INFORMATION_BIT_EXT 
+		;
 	create_info.pfnCallback = dbgFunc;
 	create_info.pUserData = NULL;
 
-	res = info.dbgCreateDebugReportCallback(info.inst, &create_info, NULL,
+	VkDebugReportCallbackEXT debug_report_callback;
+	auto res = vkCreateDebugReportCallbackEXT(info.inst, &create_info, NULL,
 											&debug_report_callback);
 	switch (res) {
 		case VK_SUCCESS:
@@ -649,19 +659,15 @@ VkResult init_debug_report_callback(ref sample_info info,
 			return VkResult.VK_ERROR_INITIALIZATION_FAILED;
 	}
 	return res;
-	+/
-	return VK_SUCCESS;
 }
 
 void destroy_debug_report_callback(ref sample_info info) 
 {
-	/+
     while (info.debug_report_callbacks.length > 0) {
-        info.dbgDestroyDebugReportCallback(
-										   info.inst, info.debug_report_callbacks.back(), NULL);
-        info.debug_report_callbacks.pop_back();
+        vkDestroyDebugReportCallbackEXT(info.inst
+										, info.debug_report_callbacks[$-1], NULL);
+        info.debug_report_callbacks.length-=1;
     }
-	+/
 }
 
 void init_connection(ref sample_info info) {
@@ -1114,25 +1120,26 @@ void init_uniform_buffer(ref sample_info info)
     if (info.width > info.height) {
         fov *= cast(float)info.height / cast(float)info.width;
     }
-	/*
-    info.Projection = perspective(fov,
+
+    info.Projection = mat4!float.perspective(fov,
                                        cast(float)info.width /
 										   cast(float)info.height, 0.1f, 100.0f);
 
-    info.View = lookAt(
-							vec3(-5, 3,-10),  // Camera is at (-5,3,-10), in World Space
-							vec3( 0, 0,  0),  // and looks at the origin
-							vec3( 0,-1,  0)   // Head is up (set to 0,-1,0 to look upside-down)
+    info.View = mat4!float.lookAt(
+							vec3!float(-5, 3,-10),  // Camera is at (-5,3,-10), in World Space
+							vec3!float( 0, 0,  0),  // and looks at the origin
+							vec3!float( 0,-1,  0)   // Head is up (set to 0,-1,0 to look upside-down)
 							);
-	*/
+
     info.Model = mat4!float.identity;
     // Vulkan clip space has inverted Y and half Z.
     info.Clip = mat4!float(1.0f,  0.0f, 0.0f, 0.0f,
-					 0.0f, -1.0f, 0.0f, 0.0f,
-					 0.0f,  0.0f, 0.5f, 0.0f,
-					 0.0f,  0.0f, 0.5f, 1.0f);
+						 0.0f, -1.0f, 0.0f, 0.0f,
+						 0.0f,  0.0f, 0.5f, 0.0f,
+						 0.0f,  0.0f, 0.5f, 1.0f);
 
     info.MVP = info.Clip * info.Projection * info.View * info.Model;
+	info.MVP = mat4!float.identity;
 
     /* VULKAN_KEY_START */
     VkBufferCreateInfo buf_info = {};
@@ -1221,10 +1228,7 @@ void init_descriptor_and_pipeline_layouts(ref sample_info info,
 	assert(res == VK_SUCCESS);
 
 	/* Now use the descriptor layout to create a pipeline layout */
-	VkPipelineLayoutCreateInfo pPipelineLayoutCreateInfo = {};
-	pPipelineLayoutCreateInfo.sType =
-		VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-	pPipelineLayoutCreateInfo.pNext = NULL;
+	VkPipelineLayoutCreateInfo pPipelineLayoutCreateInfo;
 	pPipelineLayoutCreateInfo.pushConstantRangeCount = 0;
 	pPipelineLayoutCreateInfo.pPushConstantRanges = NULL;
 	pPipelineLayoutCreateInfo.setLayoutCount = NUM_DESCRIPTOR_SETS;
@@ -1431,9 +1435,7 @@ void init_vertex_buffer(ref sample_info info, const void *vertexData,
                         uint dataSize, uint dataStride,
                         bool use_texture) 
 {
-	VkBufferCreateInfo buf_info = {};
-	buf_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-	buf_info.pNext = NULL;
+	VkBufferCreateInfo buf_info;
 	buf_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
 	buf_info.size = dataSize;
 	buf_info.queueFamilyIndexCount = 0;
@@ -1624,33 +1626,22 @@ void init_pipeline(ref sample_info info, VkBool32 include_depth,
                    VkBool32 include_vi=true) 
 {
 	VkDynamicState[VkDynamicState.max+1] dynamicStateEnables;
-	VkPipelineDynamicStateCreateInfo dynamicState = {};
-	memset(dynamicStateEnables.ptr, 0, dynamicStateEnables.sizeof);
-	dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-	dynamicState.pNext = NULL;
+	VkPipelineDynamicStateCreateInfo dynamicState;
 	dynamicState.pDynamicStates = dynamicStateEnables.ptr;
 	dynamicState.dynamicStateCount = 0;
 
 	VkPipelineVertexInputStateCreateInfo vi;
 	if (include_vi) {
-		vi.pNext = NULL;
-		vi.flags = 0;
 		vi.vertexBindingDescriptionCount = 1;
 		vi.pVertexBindingDescriptions = &info.vi_binding;
 		vi.vertexAttributeDescriptionCount = 2;
 		vi.pVertexAttributeDescriptions = info.vi_attribs.ptr;
 	}
 	VkPipelineInputAssemblyStateCreateInfo ia;
-	ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-	ia.pNext = NULL;
-	ia.flags = 0;
 	ia.primitiveRestartEnable = VK_FALSE;
 	ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
 	VkPipelineRasterizationStateCreateInfo rs;
-	rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-	rs.pNext = NULL;
-	rs.flags = 0;
 	rs.polygonMode = VK_POLYGON_MODE_FILL;
 	rs.cullMode = VK_CULL_MODE_BACK_BIT;
 	rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
@@ -1663,9 +1654,6 @@ void init_pipeline(ref sample_info info, VkBool32 include_depth,
 	rs.lineWidth = 1.0f;
 
 	VkPipelineColorBlendStateCreateInfo cb;
-	cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-	cb.flags = 0;
-	cb.pNext = NULL;
 	VkPipelineColorBlendAttachmentState[1] att_state;
 	att_state[0].colorWriteMask = 0xf;
 	att_state[0].blendEnable = VK_FALSE;
@@ -1685,24 +1673,14 @@ void init_pipeline(ref sample_info info, VkBool32 include_depth,
 	cb.blendConstants[3] = 1.0f;
 
 	VkPipelineViewportStateCreateInfo vp;
-	// Temporary disabling dynamic viewport on Android because some of drivers doesn't
-	// support the feature.
-	VkViewport viewports;
-	viewports.minDepth = 0.0f;
-	viewports.maxDepth = 1.0f;
-	viewports.x = 0;
-	viewports.y = 0;
-	viewports.width = info.width;
-	viewports.height = info.height;
-	VkRect2D scissor;
-	scissor.extent.width = info.width;
-	scissor.extent.height = info.height;
-	scissor.offset.x = 0;
-	scissor.offset.y = 0;
-	vp.viewportCount = NUM_VIEWPORTS;
-	vp.scissorCount = NUM_SCISSORS;
-	vp.pScissors = &scissor;
-	vp.pViewports = &viewports;
+    vp.viewportCount = NUM_VIEWPORTS;
+    dynamicStateEnables[dynamicState.dynamicStateCount++] =
+        VK_DYNAMIC_STATE_VIEWPORT;
+    vp.scissorCount = NUM_SCISSORS;
+    dynamicStateEnables[dynamicState.dynamicStateCount++] =
+        VK_DYNAMIC_STATE_SCISSOR;
+    vp.pScissors = NULL;
+    vp.pViewports = NULL;
 
 	VkPipelineDepthStencilStateCreateInfo ds;
 	ds.depthTestEnable = include_depth;
@@ -1731,8 +1709,6 @@ void init_pipeline(ref sample_info info, VkBool32 include_depth,
 	ms.minSampleShading = 0.0;
 
 	VkGraphicsPipelineCreateInfo pipeline;
-	pipeline.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-	pipeline.pNext = NULL;
 	pipeline.layout = info.pipeline_layout;
 	//pipeline.basePipelineHandle = VK_NULL_HANDLE;
 	pipeline.basePipelineIndex = 0;
@@ -2245,6 +2221,22 @@ void destroy_textures(ref sample_info info) {
 }
 
 
+extern(C) VkBool32 MyDebugReportCallback(
+													 VkDebugReportFlagsEXT       flags,
+													 VkDebugReportObjectTypeEXT  objectType,
+													 ulong                    object,
+													 uint                      location,
+													 int                     messageCode,
+													 const char*                 pLayerPrefix,
+													 const char*                 pMessage,
+													 void*                       pUserData)
+{
+	auto msg=fromStringz(pMessage);
+	error(msg);
+    return VK_FALSE;
+}
+
+
 void main()
 {
 	// logger
@@ -2265,13 +2257,20 @@ void main()
     auto sample_title = "Draw Cube";
     const bool depthPresent = true;
 
+	// instance
+	/////////////////////////////////////////
     //process_command_line_args(info, argc, argv);
     init_global_layer_properties(info);
     init_instance_extension_names(info);
-    init_device_extension_names(info);
+	init_instance_layer_names(info);
     init_instance(info, sample_title);
-loadInstanceFunctions(info.inst);
+	loadInstanceFunctions(info.inst);
+	init_debug_report_callback(info, &MyDebugReportCallback);
 
+	// device
+	/////////////////////////////////////////
+    init_device_extension_names(info);
+	init_device_layer_names(info);
     init_enumerate_device(info);
     init_window_size(info, 500, 500);
     init_connection(info);
@@ -2281,6 +2280,7 @@ loadInstanceFunctions(info.inst);
     init_swapchain_extension(info);
     init_device(info);
 
+	/////////////////////////////////////////
     init_command_pool(info);
     init_command_buffer(info);
     execute_begin_command_buffer(info);
@@ -2290,13 +2290,20 @@ loadInstanceFunctions(info.inst);
     init_uniform_buffer(info);
     init_descriptor_and_pipeline_layouts(info, false);
     init_renderpass(info, depthPresent);
-    init_shaders(info, "cube-vert.spv", "cube-frag.spv");
+    init_shaders(info, "15-draw_cube.vert.spv", "15-draw_cube.frag.spv");
     init_framebuffers(info, depthPresent);
-	/*
-    init_vertex_buffer(info, g_vb_solid_face_colors_Data,
-                       sizeof(g_vb_solid_face_colors_Data),
-                       sizeof(g_vb_solid_face_colors_Data[0]), false);
-	*/
+
+	static const Vertex[] vertices = [
+
+		Vertex(-0.5f, 0, -0.5, 1, 0, 0),
+		Vertex( 0.5f, 0, -0.5, 0, 1, 0),
+		Vertex(   0f, 0.5, -0.5, 0, 0, 1),
+
+	];
+
+    init_vertex_buffer(info, vertices.ptr,
+                       vertices.sizeof,
+                       vertices[0].sizeof, false);
     init_descriptor_pool(info, false);
     init_descriptor_set(info, false);
     init_pipeline_cache(info);
@@ -2360,7 +2367,7 @@ loadInstanceFunctions(info.inst);
     init_viewports(info);
     init_scissors(info);
 
-    vkCmdDraw(info.cmd, 12 * 3, 1, 0, 0);
+    vkCmdDraw(info.cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(info.cmd);
     res = vkEndCommandBuffer(info.cmd);
     const VkCommandBuffer[] cmd_bufs = [info.cmd];
@@ -2384,40 +2391,39 @@ loadInstanceFunctions(info.inst);
     submit_info[0].signalSemaphoreCount = 0;
     submit_info[0].pSignalSemaphores = NULL;
 
-    /* Queue the command buffer for execution */
-    res = vkQueueSubmit(info.graphics_queue, 1, submit_info.ptr, drawFence);
-    assert(res == VK_SUCCESS);
+	/* Queue the command buffer for execution */
+	res = vkQueueSubmit(info.graphics_queue, 1, submit_info.ptr, drawFence);
+	assert(res == VK_SUCCESS);
 
-    /* Now present the image in the window */
+	/* Now present the image in the window */
 
-    VkPresentInfoKHR present;
-    present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    present.pNext = NULL;
-    present.swapchainCount = 1;
-    present.pSwapchains = &info.swap_chain;
-    present.pImageIndices = &info.current_buffer;
-    present.pWaitSemaphores = NULL;
-    present.waitSemaphoreCount = 0;
-    present.pResults = NULL;
+	VkPresentInfoKHR present;
+	present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+	present.pNext = NULL;
+	present.swapchainCount = 1;
+	present.pSwapchains = &info.swap_chain;
+	present.pImageIndices = &info.current_buffer;
+	present.pWaitSemaphores = NULL;
+	present.waitSemaphoreCount = 0;
+	present.pResults = NULL;
 
-    /* Make sure command buffer is finished before presenting */
-    do {
-        res =
-            vkWaitForFences(info.device, 1, &drawFence, VK_TRUE, FENCE_TIMEOUT);
-    } while (res == VK_TIMEOUT);
+	/* Make sure command buffer is finished before presenting */
+	do {
+		res =
+			vkWaitForFences(info.device, 1, &drawFence, VK_TRUE, FENCE_TIMEOUT);
+	} while (res == VK_TIMEOUT);
 
-    assert(res == VK_SUCCESS);
-    res = vkQueuePresentKHR(info.present_queue, &present);
-    assert(res == VK_SUCCESS);
+	assert(res == VK_SUCCESS);
+	res = vkQueuePresentKHR(info.present_queue, &present);
+	assert(res == VK_SUCCESS);
 
-    /* VULKAN_KEY_END */
-	/*
-    if (info.save_images)
-        write_ppm(info, "drawcube");
-	*/
+	//while(glfw.newFrame())
+	{
+		 
+		//glfw.swapBuffers();
+		Sleep(1000);
 
-	while(glfw.newFrame()){
-		//
+		//break;
 	}
 
     vkDestroySemaphore(info.device, imageAcquiredSemaphore, NULL);

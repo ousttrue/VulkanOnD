@@ -11,3 +11,4 @@ dependency "d-vulkan" version="~master"
 
 dependency "gfm:math" version="~>6.1.2"
 
+versions "DVulkanAllExtensions"
