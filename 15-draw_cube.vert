@@ -13,4 +13,5 @@ out gl_PerVertex {
 void main() {
     outColor = inColor;
     gl_Position = myBufferVals.mvp * pos;
+    //gl_Position = pos;
 }
