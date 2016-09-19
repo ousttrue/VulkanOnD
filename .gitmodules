@@ -1,3 +1,9 @@
 [submodule "submodules/glfw"]
 	path = submodules/glfw
 	url = https://github.com/glfw/glfw.git
+[submodule "submodules/dvulkan"]
+	path = submodules/dvulkan
+	url = https://github.com/ousttrue/dvulkan.git
+[submodule "submodules/Vulkan-Docs"]
+	path = submodules/Vulkan-Docs
+	url = https://github.com/KhronosGroup/Vulkan-Docs.git
