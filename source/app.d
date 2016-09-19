@@ -1357,7 +1357,7 @@ public:
 		m_vertexInputState.vertexAttributeDescriptionCount = 2;
 		m_vertexInputState.pVertexAttributeDescriptions = vertexbuffer.getAttribs();
 	}
-	void setupInputAssembly(VkPrimitiveTopology topology=VkPrimitiveTopology.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+	void setupInputAssembly(VkPrimitiveTopology topology)
 	{
 		m_inputAssemblyState.primitiveRestartEnable = VK_FALSE;
 		m_inputAssemblyState.topology = cast(VkPrimitiveTopology)3;
@@ -1867,7 +1867,7 @@ int main()
 	}
 	pipeline.setupDynamicState();
 	pipeline.setupVertexInput(vertex_desc);
-	pipeline.setupInputAssembly();
+	pipeline.setupInputAssembly(VkPrimitiveTopology.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 	pipeline.setupRasterizationState();
 	pipeline.setupColorBlendState();
 	// Number of viewports and number of scissors have to be the same
