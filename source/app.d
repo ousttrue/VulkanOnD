@@ -1718,20 +1718,20 @@ int main()
 	DVulkanDerelict.loadInitializationFunctions();
 
 	// instance
-	auto instance=InstanceManager.create("glfwvulkan", "vulkan engine");
+	scope auto instance=InstanceManager.create("glfwvulkan", "vulkan engine");
 	if (!instance) {
 		return 3;
 	}
 
 	// gpu
-	auto gpus = GpuManager.enumerate_gpu(instance.get());
+	scope auto gpus = GpuManager.enumerate_gpu(instance.get());
     if(gpus.empty()){
         return 4;
     }
-	auto gpu = gpus.front();
+	scope auto gpu = gpus.front();
 
 	// surface
-	auto surface=new SurfaceManager(instance);
+	scope auto surface=new SurfaceManager(instance);
 	if (!surface.create(GetModuleHandle(null), glfw.get_hwnd()))
 	{
 		return 6;
@@ -1744,12 +1744,12 @@ int main()
 	}
 
 	// device
-	auto device = new DeviceManager(instance);
+	scope auto device = new DeviceManager(instance);
 	if(!device.create(gpu)){
         return 7;
     }
 
-	auto swapchain=new SwapchainResource(device);
+	scope auto swapchain=new SwapchainResource(device);
 	if (!swapchain.create(gpu, surface, w, h)) {
 		return 8;
 	}
@@ -1757,11 +1757,11 @@ int main()
 		return 8;
 	}
 
-	auto depth=new DepthbufferResource(device);
+	scope auto depth=new DepthbufferResource(device);
 	if (!depth.create(gpu, w, h)) {
 		return 9;
 	}
-	auto depth_memory=new DeviceMemoryResource(device);
+	scope auto depth_memory=new DeviceMemoryResource(device);
 	if (!depth_memory.allocate(gpu, depth.getMemoryRquirements(), 0)) {
 		return 9;
 	}
@@ -1772,15 +1772,15 @@ int main()
 		return 9;
 	}
 
-	auto framebuffer=new FramebufferResource(device);
+	scope auto framebuffer=new FramebufferResource(device);
 	{
-		auto imageSamples = depth.getSamples();
+		scope auto imageSamples = depth.getSamples();
 		framebuffer.attachColor(swapchain.getView(), gpu.getPrimaryFormat(), depth.getSamples());
 	}
 	{
-		auto depthView = depth.getView();
-		auto depthSamples = depth.getSamples();
-		auto depthFormat = depth.getFormat();
+		scope auto depthView = depth.getView();
+		scope auto depthSamples = depth.getSamples();
+		scope auto depthFormat = depth.getFormat();
 		framebuffer.attachDepth(depthView, depthFormat, depthSamples);
 	}
 	framebuffer.pushSubpass(0, 1);
@@ -1800,15 +1800,15 @@ int main()
 	//auto m = calcMVP(w, h);
 	static auto m=mat4!float.identity;
 
-	auto vertex_desc=new VertexbufferDesc();
+	scope auto vertex_desc=new VertexbufferDesc();
 	vertex_desc.pushAttrib();
 	vertex_desc.pushAttrib();
 
-	auto vertex_buffer=new BufferResource(device);
+	scope auto vertex_buffer=new BufferResource(device);
 	if (!vertex_buffer.create(gpu, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, Vertex.sizeof * vertices.length)) {
 		return 11;
 	}
-	auto vertex_memory=new DeviceMemoryResource(device);
+	scope auto vertex_memory=new DeviceMemoryResource(device);
 	if (!vertex_memory.allocate(gpu, vertex_buffer.getMemoryRequirements()
 								, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
 									return 11;
@@ -1824,11 +1824,11 @@ int main()
 		}
 	}
 
-	auto uniform_buffer=new BufferResource(device);
+	scope auto uniform_buffer=new BufferResource(device);
 	if (!uniform_buffer.create(gpu, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, mat4!float.sizeof)) {
 		return 12;
 	}
-	auto uniform_memory=new DeviceMemoryResource(device);
+	scope auto uniform_memory=new DeviceMemoryResource(device);
 	if (!uniform_memory.allocate(gpu, uniform_buffer.getMemoryRequirements()
 								 , VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
 									 return 12;
@@ -1844,7 +1844,7 @@ int main()
 		}
 	}
 
-	auto pipeline=new PipelineResource(device);
+	scope auto pipeline=new PipelineResource(device);
 
 	//init_glslang();
 	pipeline.addShader(VK_SHADER_STAGE_VERTEX_BIT
@@ -1882,7 +1882,7 @@ int main()
 		return 13;
 	}
 
-	auto cmd=new CommandBufferResource(device);
+	scope auto cmd=new CommandBufferResource(device);
 	if (!cmd.create(gpu.get_graphics_queue_family_index())) {
 		return 14;
 	}
